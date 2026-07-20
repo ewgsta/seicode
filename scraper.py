@@ -72,18 +72,33 @@ def main():
                         "summary": str(anime_detail.get("summary", "")),
                         "malIDs": ",".join(map(str, anime_detail.get("malIDs", []))),
                         "genres": ",".join(map(str, anime_detail.get("genres", []))),
-                        "numberOfEpisodes": anime_detail.get("numberOfEpisodes", 0)
+                        "numberOfEpisodes": anime_detail.get("numberOfEpisodes", 0),
+                        "stream_urls": "" 
                     }
-                    animes.append(flat_anime)
                     
                     seasons = anime_detail.get("seasons", [])
+                    stream_urls_list = []
                     if isinstance(seasons, list):
-                        total_episodes += len(seasons)
-                        for ep in seasons:
-                            if isinstance(ep, dict):
-                                video_links = ep.get("video_links", {})
+                        for season in seasons:
+                            if isinstance(season, dict) and "episodes" in season:
+                                for ep in season.get("episodes", []):
+                                    if isinstance(ep, dict):
+                                        total_episodes += 1
+                                        video_links = ep.get("video_links", {})
+                                        if isinstance(video_links, dict):
+                                            total_streams += len(video_links)
+                                            for provider, url in video_links.items():
+                                                stream_urls_list.append(f"{provider}:{url}")
+                            elif isinstance(season, dict) and "video_links" in season:
+                                total_episodes += 1
+                                video_links = season.get("video_links", {})
                                 if isinstance(video_links, dict):
                                     total_streams += len(video_links)
+                                    for provider, url in video_links.items():
+                                        stream_urls_list.append(f"{provider}:{url}")
+
+                    flat_anime["stream_urls"] = "|".join(stream_urls_list)
+                    animes.append(flat_anime)
             except Exception as e:
                 print(f"Error fetching {slug}: {e}")
 
