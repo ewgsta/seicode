@@ -6,7 +6,7 @@ Bu depo, Seicode'dan her 24 saatte bir güncellenen anime verilerini içerir.
 - **Toplam Anime:** 166
 - **Toplam Bölüm:** 1906
 - **Toplam Stream (Video Linki):** 6828
-- **Son Güncelleme:** 2026-07-22 01:12:28
+- **Son Güncelleme:** 2026-07-22 01:46:13
 
 ## Çıktılar (`dump/` klasörü)
 - `anime.json`: Tüm verilerin standart JSON formatı.
