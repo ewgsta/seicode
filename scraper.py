@@ -6,6 +6,11 @@ import pandas as pd
 import requests
 import xml.etree.ElementTree as ET
 from datetime import datetime
+import time
+import random
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 def reconstruct(data, index):
     if not isinstance(index, int) or index < 0 or index >= len(data):
@@ -33,75 +38,76 @@ def dict_to_xml(tag, d):
         elem.append(child)
     return elem
 
-def main():
-    base_url = "https://next.seicode.net/anime?page={}"
-    detail_url = "https://seicode.net/anime/{}/__data.json?x-sveltekit-invalidated=010"
+def create_session():
+    session = requests.Session()
+    retry = Retry(connect=5, backoff_factor=0.5, status_forcelist=[ 500, 502, 503, 504 ])
+    adapter = HTTPAdapter(max_retries=retry)
+    session.mount('http://', adapter)
+    session.mount('https://', adapter)
+    return session
+
+def parse_anime(slug, session):
+    detail_url = f"https://seicode.net/anime/{slug}/__data.json?x-sveltekit-invalidated=010"
     
-    animes = []
-    total_episodes = 0
-    total_streams = 0
+    time.sleep(random.uniform(0.1, 0.5))
     
-    first_page = requests.get(base_url.format(1)).json()
-    total_pages = first_page.get("totalPages", 1)
-    
-    for page in range(1, total_pages + 1):
-        print(f"Fetching page {page}/{total_pages}")
-        res = requests.get(base_url.format(page)).json()
-        
-        for item in res.get("animes", []):
-            slug = item.get("slug")
-            print(f"Fetching details for {slug}")
-            try:
-                detail_res = requests.get(detail_url.format(slug)).json()
-                nodes = detail_res.get("nodes", [])
-                if len(nodes) > 1 and "data" in nodes[1]:
-                    data_array = nodes[1]["data"]
-                    anime_detail = reconstruct(data_array, 1)
-                    
-                    if not isinstance(anime_detail, dict):
-                        continue
-                    
-                    flat_anime = {
-                        "id": str(anime_detail.get("id", "")),
-                        "slug": str(anime_detail.get("slug", "")),
-                        "type": str(anime_detail.get("type", "")),
-                        "english": str(anime_detail.get("english", "")),
-                        "episodeRuntime": anime_detail.get("episodeRuntime", 0),
-                        "firstAirDate": str(anime_detail.get("firstAirDate", "")),
-                        "tmdbScore": anime_detail.get("tmdbScore", 0),
-                        "summary": str(anime_detail.get("summary", "")),
-                        "malIDs": ",".join(map(str, anime_detail.get("malIDs", []))),
-                        "genres": ",".join(map(str, anime_detail.get("genres", []))),
-                        "numberOfEpisodes": anime_detail.get("numberOfEpisodes", 0),
-                        "stream_urls": "" 
-                    }
-                    
-                    seasons = anime_detail.get("seasons", [])
-                    stream_urls_list = []
-                    if isinstance(seasons, list):
-                        for season in seasons:
-                            if isinstance(season, dict) and "episodes" in season:
-                                for ep in season.get("episodes", []):
-                                    if isinstance(ep, dict):
-                                        total_episodes += 1
-                                        video_links = ep.get("video_links", {})
-                                        if isinstance(video_links, dict):
-                                            total_streams += len(video_links)
-                                            for provider, url in video_links.items():
-                                                stream_urls_list.append(f"{provider}:{url}")
-                            elif isinstance(season, dict) and "video_links" in season:
-                                total_episodes += 1
-                                video_links = season.get("video_links", {})
+    print(f"Fetching details for {slug}")
+    try:
+        detail_res = session.get(detail_url, timeout=15).json()
+        nodes = detail_res.get("nodes", [])
+        if len(nodes) > 1 and "data" in nodes[1]:
+            data_array = nodes[1]["data"]
+            anime_detail = reconstruct(data_array, 1)
+            
+            if not isinstance(anime_detail, dict):
+                return None
+            
+            flat_anime = {
+                "id": str(anime_detail.get("id", "")),
+                "slug": str(anime_detail.get("slug", "")),
+                "type": str(anime_detail.get("type", "")),
+                "english": str(anime_detail.get("english", "")),
+                "episodeRuntime": anime_detail.get("episodeRuntime", 0),
+                "firstAirDate": str(anime_detail.get("firstAirDate", "")),
+                "tmdbScore": anime_detail.get("tmdbScore", 0),
+                "summary": str(anime_detail.get("summary", "")),
+                "malIDs": ",".join(map(str, anime_detail.get("malIDs", []))),
+                "genres": ",".join(map(str, anime_detail.get("genres", []))),
+                "numberOfEpisodes": anime_detail.get("numberOfEpisodes", 0),
+                "stream_urls": "" 
+            }
+            
+            seasons = anime_detail.get("seasons", [])
+            stream_urls_list = []
+            episodes_count = 0
+            streams_count = 0
+            
+            if isinstance(seasons, list):
+                for season in seasons:
+                    if isinstance(season, dict) and "episodes" in season:
+                        for ep in season.get("episodes", []):
+                            if isinstance(ep, dict):
+                                episodes_count += 1
+                                video_links = ep.get("video_links", {})
                                 if isinstance(video_links, dict):
-                                    total_streams += len(video_links)
+                                    streams_count += len(video_links)
                                     for provider, url in video_links.items():
                                         stream_urls_list.append(f"{provider}:{url}")
+                    elif isinstance(season, dict) and "video_links" in season:
+                        episodes_count += 1
+                        video_links = season.get("video_links", {})
+                        if isinstance(video_links, dict):
+                            streams_count += len(video_links)
+                            for provider, url in video_links.items():
+                                stream_urls_list.append(f"{provider}:{url}")
 
-                    flat_anime["stream_urls"] = "|".join(stream_urls_list)
-                    animes.append(flat_anime)
-            except Exception as e:
-                print(f"Error fetching {slug}: {e}")
+            flat_anime["stream_urls"] = "|".join(stream_urls_list)
+            return flat_anime, episodes_count, streams_count
+    except Exception as e:
+        print(f"Error fetching {slug}: {e}")
+        return None
 
+def export_data(animes, total_episodes, total_streams):
     total_anime = len(animes)
     print(f"Total Anime: {total_anime}, Total Episodes: {total_episodes}, Total Streams: {total_streams}")
     
@@ -169,6 +175,51 @@ Bu depo, Seicode'dan her 24 saatte bir güncellenen anime verilerini içerir.
 """
     with open("README.md", "w", encoding="utf-8") as f:
         f.write(readme_content)
+
+def main():
+    session = create_session()
+    base_url = "https://next.seicode.net/anime?page={}"
+    
+    try:
+        print("Fetching initial page...")
+        first_page_res = session.get(base_url.format(1), timeout=15)
+        first_page_res.raise_for_status()
+        first_page = first_page_res.json()
+    except Exception as e:
+        print(f"Error on fetching home page. {e}")
+        return
+        
+    total_pages = first_page.get("totalPages", 1)
+    all_slugs = []
+    
+    for page in range(1, total_pages + 1):
+        print(f"Fetching page {page}/{total_pages}")
+        try:
+            res = session.get(base_url.format(page), timeout=15).json()
+            for item in res.get("animes", []):
+                if "slug" in item:
+                    all_slugs.append(item["slug"])
+        except Exception as e:
+            print(f"Error fetching page {page}: {e}")
+            
+    print(f"Found {len(all_slugs)} animes to process.")
+    
+    animes = []
+    total_episodes = 0
+    total_streams = 0
+    
+    with ThreadPoolExecutor(max_workers=5) as executor:
+        future_to_slug = {executor.submit(parse_anime, slug, session): slug for slug in all_slugs}
+        
+        for future in as_completed(future_to_slug):
+            result = future.result()
+            if result:
+                flat_anime, episodes_count, streams_count = result
+                animes.append(flat_anime)
+                total_episodes += episodes_count
+                total_streams += streams_count
+                
+    export_data(animes, total_episodes, total_streams)
 
 if __name__ == "__main__":
     main()

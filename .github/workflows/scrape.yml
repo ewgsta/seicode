@@ -34,3 +34,14 @@ jobs:
           git config --local user.name "github-actions[bot]"
           git add dump/ README.md
           git diff --quiet && git diff --staged --quiet || (git commit -m "chore: update anime dumps [skip ci]" && git push)
+
+      - name: Send Notification
+        if: success()
+        env:
+          NTFY_URL: ${{ secrets.NTFY_URL }}
+        run: |
+          TOTAL_ANIME=$(grep "Toplam Anime:" README.md | awk -F': ' '{print $2}')
+          TOTAL_EPISODES=$(grep "Toplam Bölüm:" README.md | awk -F': ' '{print $2}')
+          TOTAL_STREAMS=$(grep "Toplam Stream (Video Linki):" README.md | awk -F': ' '{print $2}')
+          
+          curl -d "Seicode için, $TOTAL_ANIME anime, $TOTAL_EPISODES bölüm ve $TOTAL_STREAMS stream eklendi." "$NTFY_URL"
